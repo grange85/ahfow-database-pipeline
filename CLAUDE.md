@@ -45,12 +45,34 @@ music.db              the database (not committed — lives in S3)
 4. `import_tracks.py` again — reconcile `full_title` against authoritative titles
    (fast; two UPDATEs, no inserts)
 
-`--release-type` ∈ {`Album`, `Single`, `EP`, `Misc`}. Compilations use the
-singles sheet structure, imported as `Misc`.
+**Release sheets are one CSV per artist.** Pass the act with `--act` (required —
+there is no MASTER row or `Artist` column any more). Each row is one edition;
+rows sharing a `release_title` group into a single release. `release_type` is a
+per-row column whose sheet values are mapped to the stored legacy set:
+`album→Album`, `single→Single`, `ep→EP`, and everything else
+(`compilation`, `demo`, `video`, …) → `Misc`. The old `--release-type` flag is
+gone.
 
 **Multi-act show sheets**: Dean & Britta / Dean Wareham share one CSV, as do
 Damon & Naomi / Magic Hour. `artistname` drives the act per row — omit the
 `--act` flag for these; pass it for single-act sheets.
+
+**`import_shows.py --update`** makes the CSV authoritative for re-imports.
+Default mode is purely additive (existing rows never change). With `--update`:
+scalar fields on existing shows/venues are patched to match the CSV, and each
+matched show's setlist + audio are deleted and rebuilt from the CSV (so
+reordering and added/removed entries propagate). It is **non-destructive** —
+shows in the DB but absent from the CSV are not deleted, only listed in a review
+report. Venues are deduplicated, so each venue slug is applied once per run
+(first occurrence wins) and cross-row disagreements are reported, not silently
+flip-flopped. `--dry-run` previews all changes and rolls back without committing.
+
+**`import_releases.py --update`** works the same way: release scalar fields are
+patched, and a release's editions + tracklists are deleted and rebuilt from the
+CSV when their content has changed (compared by edition fields + song identity,
+not by `full_title` casing — so capitalisation drift doesn't trigger spurious
+rebuilds). Releases in the DB but absent from the CSV are reported, not deleted.
+`--dry-run` rolls back.
 
 ## Parsing conventions
 

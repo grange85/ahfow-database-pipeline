@@ -2,3 +2,5 @@ venv
 __pycache__
 *.db
 _data/
+_csv
+_database/

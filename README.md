@@ -89,11 +89,12 @@ invariants.
 # 1. Seed the global song catalogue
 python import_tracks.py tracks.csv --db music.db
 
-# 2. Import all release sheets (order between sheets doesn't matter)
-python import_releases.py galaxie-500-001-today.csv      --db music.db --release-type Album
-python import_releases.py galaxie-500-101-singles.csv    --db music.db --release-type Single
-python import_releases.py damon-naomi-101-singles.csv    --db music.db --release-type Single
-# ... all acts, all sheets ...
+# 2. Import all release sheets — one sheet per artist, act via --act
+#    (order between sheets doesn't matter; release_type is a column in the sheet)
+python import_releases.py galaxie-500-releases.csv       --db music.db --act "Galaxie 500"
+python import_releases.py luna-releases.csv              --db music.db --act "Luna"
+python import_releases.py damon-naomi-releases.csv       --db music.db --act "Damon & Naomi"
+# ... all acts ...
 
 # 3. Import all show sheets (after releases so setlists resolve cleanly)
 python import_shows.py galaxie-500-shows.csv             --db music.db --act "Galaxie 500"
@@ -109,19 +110,67 @@ Step 4 is fast (no inserts, just two UPDATE queries) and ensures `full_title`
 on `song_versions` always reflects `songs.title` regardless of capitalisation
 in release sheets or setlists.
 
-### Release type values
+### Release sheets and release types
 
-`--release-type` must be one of: `Album`, `Single`, `EP`, `Misc`
+Each artist has **one releases CSV**. There is no MASTER row and no `Artist`
+column — the act is supplied with the required `--act` flag. Every row is one
+**edition**; rows that share a `release_title` are grouped into a single
+release. The release's year is the earliest edition year, and its sleeve /
+`album_artist` come from the first matching row.
 
-Compilations use the singles sheet structure (one row per release/edition)
-and should be imported with `--release-type Misc` or a dedicated `Compilation`
-type if added to the schema.
+`release_type` is a per-row column. Its sheet values are mapped to the stored
+(legacy) set used by `generate_data.py`:
+
+| Sheet value | Stored |
+|---|---|
+| `album` | `Album` |
+| `single` | `Single` |
+| `ep` | `EP` |
+| `compilation`, `demo`, `video`, anything else | `Misc` |
 
 ### Multi-act show sheets
 
 The Dean & Britta / Dean Wareham shows are in one CSV with `artistname`
 driving the act per row. Same for Damon & Naomi / Magic Hour. The
 `import_shows.py` `--act` flag is optional — omit it for multi-act sheets.
+
+### Updating from the CSV (`--update` / `--dry-run`)
+
+By default the importers are **additive** — re-running never changes rows that
+already exist in the DB. When the CSV is the master copy and you want edits to
+propagate, both `import_shows.py` and `import_releases.py` accept `--update`:
+
+```bash
+# Preview what would change, without writing anything
+python import_shows.py    galaxie-500-shows.csv    --db music.db --act "Galaxie 500" --update --dry-run
+python import_releases.py galaxie-500-releases.csv --db music.db --act "Galaxie 500" --update --dry-run
+
+# Apply the changes (drop --dry-run)
+python import_shows.py    galaxie-500-shows.csv    --db music.db --act "Galaxie 500" --update
+python import_releases.py galaxie-500-releases.csv --db music.db --act "Galaxie 500" --update
+```
+
+Common behaviour in update mode:
+
+- Scalar fields on existing rows are patched to match the CSV.
+- Child records are deleted and rebuilt from the CSV when their content changed
+  (shows: setlist + audio; releases: editions + tracklists).
+- It is **non-destructive**: rows in the DB but absent from the CSV are *not*
+  deleted — they are listed in an "In DB but not in CSV" report so you can review
+  them and add them to the sheet if appropriate.
+
+For **shows** specifically: venues are deduplicated, so each venue slug is
+applied once per run (first occurrence wins). When the same venue appears in
+multiple rows with inconsistent spelling/details, the disagreements are reported
+for you to fix in the sheet rather than flip-flopping silently.
+
+For **releases** specifically: edition rebuilds compare on edition fields plus
+*song identity* (which song + version_tag), not on the `full_title` string — so
+capitalisation drift between editions does not trigger spurious rebuilds
+(`full_title` is reconciled by step 4 anyway).
+
+`--dry-run` performs all the work in a transaction and rolls it back, printing
+the same summary and reports — useful before overwriting hand-edited DB data.
 
 ### Special track prefixes in release sheets
 
